@@ -5,7 +5,7 @@ from st_copy_to_clipboard import st_copy_to_clipboard
 import sqlite3
 import hashlib
 from datetime import datetime
-import base64  # For download button
+import base64  # For browser download button
 
 # ====================== DATABASE SETUP ======================
 DB_FILE = "users.db"
@@ -34,7 +34,7 @@ def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def register():
-    st.title("Register")
+    st.title("Register New Account")
     new_user = st.text_input("Choose Username")
     new_pass = st.text_input("Choose Password", type="password")
     if st.button("Register"):
@@ -45,7 +45,7 @@ def register():
                 c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)",
                           (new_user, hash_password(new_pass)))
                 conn.commit()
-                st.success("Registered successfully! Go to Login.")
+                st.success("Registered successfully! Switch to Login tab.")
             except sqlite3.IntegrityError:
                 st.error("Username already exists.")
             conn.close()
@@ -97,16 +97,17 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
-    tab1, tab2 = st.tabs(["Login", "Register"])
-    with tab1:
+    tab_login, tab_register = st.tabs(["Login", "Register"])
+    with tab_login:
         login()
-    with tab2:
+    with tab_register:
         register()
 else:
+    # Sidebar
     with st.sidebar:
         st.write(f"**Logged in as:** {st.session_state.username}")
         st.divider()
-        st.subheader("History")
+        st.subheader("Explanation History")
         history = get_history(st.session_state.username)
         if history:
             for title, artist, explanation, ts in history:
@@ -117,14 +118,15 @@ else:
         st.divider()
         logout()
 
-    # === Main Tabs ===
-    tab1, tab2 = st.tabs(["Song Explainer", "Download Free Music"])
+    # Main Tabs
+    tab_explainer, tab_downloader = st.tabs(["Song Explainer", "Download Free Music"])
 
+    # Groq client
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-    with tab1:
+    with tab_explainer:
         st.header("Song Explainer")
-        st.write("Search or paste lyrics to get AI explanations")
+        st.write("Search lyrics or paste them to get an AI-powered explanation")
 
         option = st.radio("Input method", ["Search by Title/Artist", "Paste Lyrics"], key="explainer_option")
 
@@ -137,18 +139,18 @@ else:
 
             if st.button("Explain Meaning", key="explain_search"):
                 if not title or not artist:
-                    st.warning("Enter both title and artist.")
+                    st.warning("Please enter both title and artist.")
                 else:
-                    with st.spinner("Fetching lyrics & analyzing..."):
+                    with st.spinner("Fetching lyrics and analyzing..."):
                         url = f"https://api.lyrics.ovh/v1/{artist}/{title}"
                         response = requests.get(url)
                         if response.status_code == 200 and response.json().get("lyrics"):
                             lyrics = response.json()["lyrics"]
                             st.subheader(f"{title} by {artist}")
                             st.text_area("Lyrics", lyrics, height=250, disabled=True)
-                            st_copy_to_clipboard(lyrics, "📋 Copy Lyrics", "✅ Copied!", key="copy_search_tab1")
+                            st_copy_to_clipboard(lyrics, "📋 Copy Lyrics", "✅ Copied!", key="copy_search")
 
-                            prompt = f"Explain the meaning of these lyrics in an engaging way. Include theme, metaphors, references, and context:\n\n{lyrics}"
+                            prompt = f"Explain the meaning of these song lyrics in an engaging, insightful way. Include overall theme, story, line-by-line breakdown of key parts, metaphors, references, symbolism, and emotional/cultural context:\n\n{lyrics}"
                             chat_completion = client.chat.completions.create(
                                 messages=[{"role": "user", "content": prompt}],
                                 model="llama-3.1-8b-instant",
@@ -156,16 +158,17 @@ else:
                             explanation = chat_completion.choices[0].message.content
                             st.markdown("### 🤖 AI Explanation")
                             st.markdown(explanation)
+
                             save_history(st.session_state.username, title, artist, explanation)
                         else:
-                            st.error("Lyrics not found. Try paste mode!")
+                            st.error("Lyrics not found for this song. Try 'Paste Lyrics' mode or different spelling.")
 
-        else:
-            lyrics = st.text_area("Paste Lyrics Here", height=300, key="paste_lyrics_tab1")
+        else:  # Paste Lyrics
+            lyrics = st.text_area("Paste Lyrics Here", height=300, key="paste_lyrics")
             if lyrics.strip():
                 if st.button("Explain Meaning", key="explain_paste"):
-                    with st.spinner("Analyzing..."):
-                        prompt = f"Explain the meaning of these lyrics in an engaging way. Include theme, metaphors, references, and context:\n\n{lyrics}"
+                    with st.spinner("Analyzing with AI..."):
+                        prompt = f"Explain the meaning of these song lyrics in an engaging, insightful way. Include overall theme, story, line-by-line breakdown of key parts, metaphors, references, symbolism, and emotional/cultural context:\n\n{lyrics}"
                         chat_completion = client.chat.completions.create(
                             messages=[{"role": "user", "content": prompt}],
                             model="llama-3.1-8b-instant",
@@ -173,57 +176,61 @@ else:
                         explanation = chat_completion.choices[0].message.content
                         st.markdown("### 🤖 AI Explanation")
                         st.markdown(explanation)
+
                         save_history(st.session_state.username, "Pasted Song", "", explanation)
 
-                st_copy_to_clipboard(lyrics, "📋 Copy Lyrics", "✅ Copied!", key="copy_paste_tab1")
+                st_copy_to_clipboard(lyrics, "📋 Copy Lyrics", "✅ Copied!", key="copy_paste")
 
-    with tab2:
+    with tab_downloader:
         st.header("Download Free & Legal Music")
-        st.write("Search royalty-free music from **Free Music Archive** (Creative Commons)")
+        st.write("Discover independent music from **Jamendo** – all tracks are Creative Commons licensed and free to download!")
 
-        search_query = st.text_input("Search for free music (e.g., electronic, rock, instrumental)", key="fma_search")
-        if st.button("Search Free Music"):
+        search_query = st.text_input("Search for music (e.g., rock, chill, instrumental, pop)", key="jamendo_search")
+        if st.button("Search Music", key="jamendo_btn"):
             if search_query:
-                with st.spinner("Searching Free Music Archive..."):
-                    # FMA API search
-                    search_url = f"https://freemusicarchive.org/api/get/tracks.json?api_key=YOUR_FMA_KEY&limit=20&search={search_query}"
-                    # Note: FMA API needs a key — for demo, we'll use a public endpoint alternative
-                    # Using a public proxy endpoint (no key needed)
-                    api_url = f"https://files.freemusicarchive.org/music-api.php?search={search_query}"
-                    try:
-                        response = requests.get(api_url)
-                        if response.status_code == 200:
-                            tracks = response.json().get("tracks", [])
-                            if tracks:
-                                for track in tracks[:10]:
-                                    title = track.get("track_title", "Unknown")
-                                    artist = track.get("artist_name", "Unknown")
-                                    url = track.get("track_url_mp3", "")
-                                    duration = track.get("track_duration", "Unknown")
-                                    license = track.get("license_title", "CC")
+                with st.spinner("Searching Jamendo for free tracks..."):
+                    url = "https://api.jamendo.com/v3.0/tracks/"
+                    params = {
+                        "client_id": st.secrets["JAMENDO_CLIENT_ID"],
+                        "format": "json",
+                        "limit": 15,
+                        "search": search_query,
+                        "audioformat": "mp3",
+                        "include": "musicinfo+licenses"
+                    }
+                    response = requests.get(url, params=params)
+                    if response.status_code == 200:
+                        data = response.json()
+                        tracks = data.get("results", [])
+                        if tracks:
+                            st.success(f"Found {len(tracks)} free tracks!")
+                            for track in tracks:
+                                title = track["name"]
+                                artist = track["artist_name"]
+                                audio_url = track["audiodownload"]
+                                duration = track["duration"]
+                                license_url = track.get("license_ccurl", "https://creativecommons.org/licenses/")
 
-                                    with st.container():
-                                        col1, col2 = st.columns([3, 1])
-                                        with col1:
-                                            st.write(f"**{title}** by {artist}")
-                                            st.caption(f"Duration: {duration} • License: {license}")
-                                        with col2:
-                                            if url:
-                                                # Download button
-                                                dl_response = requests.get(url)
-                                                if dl_response.status_code == 200:
-                                                    b64 = base64.b64encode(dl_response.content).decode()
-                                                    href = f'<a href="data:audio/mp3;base64,{b64}" download="{title} - {artist}.mp3">Download MP3</a>'
-                                                    st.markdown(href, unsafe_allow_html=True)
-                                            st.write("")
-                            else:
-                                st.info("No tracks found. Try different keywords!")
+                                col1, col2 = st.columns([4, 1])
+                                with col1:
+                                    st.write(f"**{title}** – {artist}")
+                                    st.caption(f"Duration: {duration}s • [License]({license_url})")
+                                with col2:
+                                    if audio_url:
+                                        # Download link with client_id
+                                        full_url = audio_url + f"?client_id={st.secrets['JAMENDO_CLIENT_ID']}"
+                                        dl_resp = requests.get(full_url)
+                                        if dl_resp.status_code == 200:
+                                            b64 = base64.b64encode(dl_resp.content).decode()
+                                            href = f'<a href="data:audio/mp3;base64,{b64}" download="{title} - {artist}.mp3"><button>⬇️ Download MP3</button></a>'
+                                            st.markdown(href, unsafe_allow_html=True)
                         else:
-                            st.error("FMA API error. Try again later.")
-                    except:
-                        st.error("Connection issue. Using demo tracks.")
-                        st.info("For full FMA integration, get a free API key at freemusicarchive.org")
+                            st.info("No tracks found. Try broader keywords like 'chill', 'rock', or 'instrumental'.")
+                    else:
+                        st.error("Jamendo API error. Check your client_id in Secrets.")
+            else:
+                st.warning("Enter a search term!")
 
-        st.caption("All music here is legally downloadable under Creative Commons • Perfect for projects!")
+        st.caption("All music from Jamendo is legally downloadable under Creative Commons • Supports independent artists worldwide!")
 
-st.caption("Song Explainer + Legal Music Downloader • Built with ❤️ for your capstone")
+st.caption("Song Explainer AI + Legal Music Downloader • Built for learning & fun")
