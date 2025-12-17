@@ -1,11 +1,10 @@
 import streamlit as st
-from lyricsgenius import Genius
+import requests  # NEW: For lyrics.ovh API
 from groq import Groq
-from st_copy_to_clipboard import st_copy_to_clipboard  # NEW: Import the working copy component
+from st_copy_to_clipboard import st_copy_to_clipboard  # For copy button
 
-# === API Keys ===
+# === Groq API (using secrets for deployment) ===
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-genius = Genius(st.secrets["GENIUS_TOKEN"])
 
 st.title("🎵 Song Explainer AI")
 st.write("Get deep, fun explanations of any song lyrics instantly!")
@@ -23,24 +22,27 @@ if option == "Search by Title/Artist":
         if not title or not artist:
             st.warning("Please enter both song title and artist.")
         else:
-            with st.spinner("Searching lyrics on Genius and analyzing..."):
-                song = genius.search_song(title, artist)
-                if song and song.lyrics:
-                    lyrics = song.lyrics
-                    st.subheader(f"{song.title} by {song.artist}")
+            with st.spinner("Searching lyrics and analyzing..."):
+                # Fetch from free lyrics.ovh API (no key, reliable on cloud)
+                url = f"https://api.lyrics.ovh/v1/{artist}/{title}"
+                response = requests.get(url)
+                
+                if response.status_code == 200 and response.json().get("lyrics"):
+                    lyrics = response.json()["lyrics"]
+                    st.subheader(f"{title} by {artist}")
 
                     # Display lyrics
                     st.text_area("Lyrics", lyrics, height=250, disabled=True)
 
-                    # === REAL WORKING COPY BUTTON ===
+                    # Working copy button
                     st_copy_to_clipboard(
                         lyrics,
                         before_copy_label="📋 Copy Lyrics to Clipboard",
                         after_copy_label="✅ Copied!",
-                        key="copy_search_lyrics"
+                        key="copy_search"
                     )
 
-                    # Run AI explanation
+                    # AI explanation
                     prompt = f"""
                     Explain the meaning of these song lyrics in an engaging, insightful way.
                     Include:
@@ -60,7 +62,7 @@ if option == "Search by Title/Artist":
                     st.markdown("### 🤖 AI Explanation")
                     st.markdown(explanation)
                 else:
-                    st.error("Song not found or lyrics unavailable. Try 'Paste Lyrics' mode instead!")
+                    st.error("Lyrics not found for this song. Try 'Paste Lyrics' mode or a different title/artist!")
 
 else:  # Paste Lyrics mode
     lyrics = st.text_area("Paste Lyrics Here", height=300)
@@ -87,12 +89,12 @@ else:  # Paste Lyrics mode
                 st.markdown("### 🤖 AI Explanation")
                 st.markdown(explanation)
 
-        # Optional: Add copy button in paste mode too
+        # Copy button for paste mode too
         st_copy_to_clipboard(
             lyrics,
             before_copy_label="📋 Copy Lyrics to Clipboard",
             after_copy_label="✅ Copied!",
-            key="copy_paste_lyrics"
+            key="copy_paste"
         )
 
-st.caption("Tip: Auto-search sometimes fails due to Genius restrictions. Pasting lyrics always works perfectly!")
+st.caption("Search uses free lyrics.ovh API – works great on hosted apps! Paste mode always perfect.")
