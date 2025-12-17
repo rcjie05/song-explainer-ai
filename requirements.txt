@@ -1,4 +1,4 @@
 streamlit
-lyricsgenius
 groq
+requests
 st-copy-to-clipboard
