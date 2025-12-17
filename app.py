@@ -5,7 +5,10 @@ from st_copy_to_clipboard import st_copy_to_clipboard
 import sqlite3
 import hashlib
 from datetime import datetime
-import base64  # For browser download button
+from pytube import YouTube
+import os
+import tempfile
+import re
 
 # ====================== DATABASE SETUP ======================
 DB_FILE = "users.db"
@@ -45,15 +48,15 @@ def register():
                 c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)",
                           (new_user, hash_password(new_pass)))
                 conn.commit()
-                st.success("Registered successfully! Switch to Login tab.")
+                st.success("Registered successfully! Go to Login tab.")
             except sqlite3.IntegrityError:
-                st.error("Username already exists.")
+                st.error("Username already taken.")
             conn.close()
         else:
-            st.warning("Please fill both fields.")
+            st.warning("Fill in both fields.")
 
 def login():
-    st.title("Login to Song Explainer AI")
+    st.title("Login")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
     if st.button("Login"):
@@ -67,13 +70,12 @@ def login():
             st.session_state.username = username
             st.rerun()
         else:
-            st.error("Invalid username or password")
+            st.error("Wrong username or password")
 
 def logout():
     if st.button("Logout"):
-        for key in ['logged_in', 'username']:
-            if key in st.session_state:
-                del st.session_state[key]
+        st.session_state.logged_in = False
+        st.session_state.username = None
         st.rerun()
 
 def save_history(username, title, artist, explanation):
@@ -105,131 +107,129 @@ if not st.session_state.logged_in:
 else:
     # Sidebar
     with st.sidebar:
-        st.write(f"**Logged in as:** {st.session_state.username}")
+        st.write(f"**Welcome, {st.session_state.username}!**")
         st.divider()
-        st.subheader("Explanation History")
+        st.subheader("Your Explanation History")
         history = get_history(st.session_state.username)
         if history:
             for title, artist, explanation, ts in history:
                 with st.expander(f"{title} – {artist} ({ts})"):
                     st.markdown(explanation)
         else:
-            st.info("No history yet.")
+            st.info("No explanations saved yet.")
         st.divider()
         logout()
 
     # Main Tabs
-    tab_explainer, tab_downloader = st.tabs(["Song Explainer", "Download Free Music"])
+    tab_explainer, tab_youtube = st.tabs(["Song Explainer", "YouTube MP3 Downloader"])
 
     # Groq client
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
+    # ====================== SONG EXPLAINER TAB ======================
     with tab_explainer:
         st.header("Song Explainer")
-        st.write("Search lyrics or paste them to get an AI-powered explanation")
+        st.write("Get deep AI explanations of any song lyrics")
 
-        option = st.radio("Input method", ["Search by Title/Artist", "Paste Lyrics"], key="explainer_option")
+        option = st.radio("How do you want to input lyrics?", ["Search by Title & Artist", "Paste Lyrics Directly"], key="input_method")
 
-        if option == "Search by Title/Artist":
+        if option == "Search by Title & Artist":
             col1, col2 = st.columns(2)
             with col1:
-                title = st.text_input("Song Title", key="search_title")
+                title = st.text_input("Song Title", key="title_search")
             with col2:
-                artist = st.text_input("Artist", key="search_artist")
+                artist = st.text_input("Artist", key="artist_search")
 
-            if st.button("Explain Meaning", key="explain_search"):
-                if not title or not artist:
-                    st.warning("Please enter both title and artist.")
-                else:
-                    with st.spinner("Fetching lyrics and analyzing..."):
+            if st.button("Fetch Lyrics & Explain", key="fetch_explain"):
+                if title and artist:
+                    with st.spinner("Fetching lyrics..."):
                         url = f"https://api.lyrics.ovh/v1/{artist}/{title}"
-                        response = requests.get(url)
-                        if response.status_code == 200 and response.json().get("lyrics"):
-                            lyrics = response.json()["lyrics"]
-                            st.subheader(f"{title} by {artist}")
+                        resp = requests.get(url)
+                        if resp.status_code == 200 and resp.json().get("lyrics"):
+                            lyrics = resp.json()["lyrics"]
+                            st.subheader(f"{title} – {artist}")
                             st.text_area("Lyrics", lyrics, height=250, disabled=True)
-                            st_copy_to_clipboard(lyrics, "📋 Copy Lyrics", "✅ Copied!", key="copy_search")
+                            st_copy_to_clipboard(lyrics, "Copy Lyrics")
 
-                            prompt = f"Explain the meaning of these song lyrics in an engaging, insightful way. Include overall theme, story, line-by-line breakdown of key parts, metaphors, references, symbolism, and emotional/cultural context:\n\n{lyrics}"
-                            chat_completion = client.chat.completions.create(
-                                messages=[{"role": "user", "content": prompt}],
-                                model="llama-3.1-8b-instant",
-                            )
-                            explanation = chat_completion.choices[0].message.content
-                            st.markdown("### 🤖 AI Explanation")
-                            st.markdown(explanation)
-
-                            save_history(st.session_state.username, title, artist, explanation)
+                            with st.spinner("Generating AI explanation..."):
+                                prompt = f"Explain the meaning of these lyrics in an engaging and insightful way. Include theme, story, key metaphors, symbolism, and context:\n\n{lyrics}"
+                                completion = client.chat.completions.create(
+                                    messages=[{"role": "user", "content": prompt}],
+                                    model="llama-3.1-8b-instant"
+                                )
+                                explanation = completion.choices[0].message.content
+                                st.markdown("### AI Explanation")
+                                st.markdown(explanation)
+                                save_history(st.session_state.username, title, artist, explanation)
                         else:
-                            st.error("Lyrics not found for this song. Try 'Paste Lyrics' mode or different spelling.")
+                            st.error("Lyrics not found. Try different spelling or paste them manually.")
+                else:
+                    st.warning("Please enter both song title and artist.")
 
-        else:  # Paste Lyrics
-            lyrics = st.text_area("Paste Lyrics Here", height=300, key="paste_lyrics")
+        else:  # Paste lyrics
+            lyrics = st.text_area("Paste your lyrics here", height=300, key="pasted_lyrics")
             if lyrics.strip():
-                if st.button("Explain Meaning", key="explain_paste"):
+                st_copy_to_clipboard(lyrics, "Copy Lyrics")
+                if st.button("Explain These Lyrics", key="explain_pasted"):
                     with st.spinner("Analyzing with AI..."):
-                        prompt = f"Explain the meaning of these song lyrics in an engaging, insightful way. Include overall theme, story, line-by-line breakdown of key parts, metaphors, references, symbolism, and emotional/cultural context:\n\n{lyrics}"
-                        chat_completion = client.chat.completions.create(
+                        prompt = f"Explain the meaning of these lyrics in an engaging and insightful way. Include theme, story, key metaphors, symbolism, and context:\n\n{lyrics}"
+                        completion = client.chat.completions.create(
                             messages=[{"role": "user", "content": prompt}],
-                            model="llama-3.1-8b-instant",
+                            model="llama-3.1-8b-instant"
                         )
-                        explanation = chat_completion.choices[0].message.content
-                        st.markdown("### 🤖 AI Explanation")
+                        explanation = completion.choices[0].message.content
+                        st.markdown("### AI Explanation")
                         st.markdown(explanation)
+                        save_history(st.session_state.username, "Pasted Lyrics", "", explanation)
 
-                        save_history(st.session_state.username, "Pasted Song", "", explanation)
+    # ====================== YOUTUBE DOWNLOADER TAB ======================
+    with tab_youtube:
+        st.header("YouTube to MP3 Downloader")
+        st.info("Paste any YouTube video URL → get clean MP3 audio instantly")
+        st.warning("⚠️ Only download content you have permission for (e.g., your own, Creative Commons, fair use). Respect copyright laws.")
 
-                st_copy_to_clipboard(lyrics, "📋 Copy Lyrics", "✅ Copied!", key="copy_paste")
+        youtube_url = st.text_input(
+            "Paste YouTube URL here",
+            placeholder="https://www.youtube.com/watch?v=...",
+            key="youtube_url_input"
+        )
 
-    with tab_downloader:
-        st.header("Download Free & Legal Music")
-        st.write("Discover independent music from **Jamendo** – all tracks are Creative Commons licensed and free to download!")
+        if st.button("Download MP3 from This Video", key="download_mp3"):
+            if youtube_url.strip():
+                with st.spinner("Connecting to YouTube and extracting audio..."):
+                    try:
+                        yt = YouTube(youtube_url)
+                        title = yt.title or "YouTube Audio"
+                        author = yt.author or "Unknown"
 
-        search_query = st.text_input("Search for music (e.g., groove rock, high energy, ambient, piano instrumental)", key="jamendo_search")
-        if st.button("Search Music", key="jamendo_btn"):
-            if search_query:
-                with st.spinner("Searching Jamendo for free tracks..."):
-                    url = "https://api.jamendo.com/v3.0/tracks/"
-                    params = {
-                        "client_id": st.secrets["JAMENDO_CLIENT_ID"],
-                        "format": "json",
-                        "limit": 15,
-                        "fuzzytags": search_query.replace(" ", "+"),  # Better matching for genres
-                        "audioformat": "mp3",
-                        "include": "musicinfo+licenses"
-                    }
-                    response = requests.get(url, params=params)
-                    if response.status_code == 200:
-                        data = response.json()
-                        tracks = data.get("results", [])
-                        if tracks:
-                            st.success(f"Found {len(tracks)} free tracks!")
-                            for track in tracks:
-                                title = track["name"]
-                                artist = track["artist_name"]
-                                audio_url = track["audiodownload"]
-                                duration = track["duration"]
-                                license_url = track.get("license_ccurl", "https://creativecommons.org/licenses/")
+                        # Clean filename
+                        safe_filename = re.sub(r'[^\w\s-]', '', f"{title} - {author}")
+                        safe_filename = safe_filename.strip().replace(" ", "_") + ".mp3"
 
-                                col1, col2 = st.columns([4, 1])
-                                with col1:
-                                    st.write(f"**{title}** – {artist}")
-                                    st.caption(f"Duration: {duration}s • [License]({license_url})")
-                                with col2:
-                                    if audio_url:
-                                        full_url = audio_url + f"?client_id={st.secrets['JAMENDO_CLIENT_ID']}"
-                                        dl_resp = requests.get(full_url)
-                                        if dl_resp.status_code == 200:
-                                            b64 = base64.b64encode(dl_resp.content).decode()
-                                            href = f'<a href="data:audio/mp3;base64,{b64}" download="{title} - {artist}.mp3"><button style="padding:10px; background:#1DB954; color:white; border:none; border-radius:5px; cursor:pointer;">⬇️ Download MP3</button></a>'
-                                            st.markdown(href, unsafe_allow_html=True)
+                        # Get highest quality audio
+                        stream = yt.streams.filter(only_audio=True).order_by("abr").desc().first()
+                        if not stream:
+                            st.error("No audio stream found in this video.")
                         else:
-                            st.info("No tracks found. Try keywords like 'groove rock', 'high energy', 'ambient', or 'piano instrumental'.")
-                    else:
-                        st.error(f"Jamendo API error (status {response.status_code}). Check your client_id.")
+                            # Download to temp file
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                                stream.download(filename=tmp.name)
+                                with open(tmp.name, "rb") as f:
+                                    audio_data = f.read()
+                                os.unlink(tmp.name)  # delete temp file
+
+                            st.success(f"**{title}** by **{author}** – Ready!")
+                            st.download_button(
+                                label="⬇️ Download MP3 Now",
+                                data=audio_data,
+                                file_name=safe_filename,
+                                mime="audio/mpeg",
+                                key="final_download"
+                            )
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+                        st.info("Try a different video or check the URL.")
             else:
-                st.warning("Enter a search term!")
+                st.warning("Please paste a YouTube URL first.")
 
-        st.caption("All music from Jamendo is legally downloadable under Creative Commons • Supports independent artists worldwide!")
-
-st.caption("Song Explainer AI + Legal Music Downloader • Built for learning & fun")
+st.caption("Song Explainer AI + YouTube MP3 Downloader • Built with ❤️ using Streamlit, Groq & pytube")
