@@ -191,13 +191,13 @@ else:
                 with st.spinner("Searching Jamendo for free tracks..."):
                     url = "https://api.jamendo.com/v3.0/tracks/"
                     params = {
-                        "client_id": st.secrets["JAMENDO_CLIENT_ID"],
-                        "format": "json",
-                        "limit": 15,
-                        "search": search_query,
-                        "audioformat": "mp3",
-                        "include": "musicinfo+licenses"
-                    }
+                    "client_id": st.secrets["JAMENDO_CLIENT_ID"],
+                    "format": "json",
+                    "limit": 15,
+                    "fuzzytags": search_query,  # Changed to fuzzytags
+                    "audioformat": "mp3",
+                    "include": "musicinfo+licenses"
+}
                     response = requests.get(url, params=params)
                     if response.status_code == 200:
                         data = response.json()
