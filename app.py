@@ -5,10 +5,10 @@ from st_copy_to_clipboard import st_copy_to_clipboard
 import sqlite3
 import hashlib
 from datetime import datetime
-from pytube import YouTube
 import os
 import tempfile
 import re
+import yt_dlp  # Reliable YouTube downloader
 
 # ====================== DATABASE SETUP ======================
 DB_FILE = "users.db"
@@ -182,54 +182,69 @@ else:
                         st.markdown(explanation)
                         save_history(st.session_state.username, "Pasted Lyrics", "", explanation)
 
-    # ====================== YOUTUBE DOWNLOADER TAB ======================
+    # ====================== YOUTUBE DOWNLOADER TAB (RELIABLE yt-dlp) ======================
     with tab_youtube:
         st.header("YouTube to MP3 Downloader")
-        st.info("Paste any YouTube video URL → get clean MP3 audio instantly")
-        st.warning("⚠️ Only download content you have permission for (e.g., your own, Creative Commons, fair use). Respect copyright laws.")
+        st.info("Paste any YouTube video URL → get high-quality MP3 with preview!")
+        st.warning("⚠️ Only download content you have permission for (personal use, fair use, your own videos). Respect copyright laws.")
 
         youtube_url = st.text_input(
             "Paste YouTube URL here",
-            placeholder="https://www.youtube.com/watch?v=...",
+            placeholder="https://www.youtube.com/watch?v=... or https://youtu.be/...",
             key="youtube_url_input"
         )
 
-        if st.button("Download MP3 from This Video", key="download_mp3"):
-            if youtube_url.strip():
-                with st.spinner("Connecting to YouTube and extracting audio..."):
-                    try:
-                        yt = YouTube(youtube_url)
-                        title = yt.title or "YouTube Audio"
-                        author = yt.author or "Unknown"
-
-                        # Clean filename
-                        safe_filename = re.sub(r'[^\w\s-]', '', f"{title} - {author}")
-                        safe_filename = safe_filename.strip().replace(" ", "_") + ".mp3"
-
-                        # Get highest quality audio
-                        stream = yt.streams.filter(only_audio=True).order_by("abr").desc().first()
-                        if not stream:
-                            st.error("No audio stream found in this video.")
-                        else:
-                            # Download to temp file
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-                                stream.download(filename=tmp.name)
-                                with open(tmp.name, "rb") as f:
-                                    audio_data = f.read()
-                                os.unlink(tmp.name)  # delete temp file
-
-                            st.success(f"**{title}** by **{author}** – Ready!")
-                            st.download_button(
-                                label="⬇️ Download MP3 Now",
-                                data=audio_data,
-                                file_name=safe_filename,
-                                mime="audio/mpeg",
-                                key="final_download"
-                            )
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
-                        st.info("Try a different video or check the URL.")
+        if st.button("Extract MP3 Audio", key="download_mp3"):
+            if not youtube_url.strip():
+                st.warning("Please paste a valid YouTube URL.")
             else:
-                st.warning("Please paste a YouTube URL first.")
+                with st.spinner("Downloading and converting audio (yt-dlp + FFmpeg)..."):
+                    try:
+                        with tempfile.TemporaryDirectory() as tmp_dir:
+                            ydl_opts = {
+                                'format': 'bestaudio/best',
+                                'postprocessors': [{
+                                    'key': 'FFmpegExtractAudio',
+                                    'preferredcodec': 'mp3',
+                                    'preferredquality': '192',
+                                }],
+                                'outtmpl': os.path.join(tmp_dir, '%(title)s - %(uploader)s.%(ext)s'),
+                                'quiet': True,
+                                'noplaylist': True,
+                            }
 
-st.caption("Song Explainer AI + YouTube MP3 Downloader • Built with ❤️ using Streamlit, Groq & pytube")
+                            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                                info = ydl.extract_info(youtube_url, download=True)
+                                title = info.get('title', 'YouTube Audio')
+                                uploader = info.get('uploader', 'Unknown')
+
+                            # Find the converted MP3
+                            mp3_files = [f for f in os.listdir(tmp_dir) if f.endswith('.mp3')]
+                            if not mp3_files:
+                                st.error("MP3 conversion failed — FFmpeg may be missing or not in PATH.")
+                            else:
+                                mp3_path = os.path.join(tmp_dir, mp3_files[0])
+                                with open(mp3_path, "rb") as f:
+                                    audio_bytes = f.read()
+
+                                safe_name = re.sub(r'[^\w\s-]', '', f"{title} - {uploader}").strip()
+                                safe_name = re.sub(r'\s+', '_', safe_name)
+                                filename = f"{safe_name}.mp3" if safe_name else "audio.mp3"
+
+                                st.success(f"✅ **{title}** by **{uploader}** – Ready!")
+                                st.audio(audio_bytes, format="audio/mp3")
+                                st.download_button(
+                                    label="⬇️ Download MP3",
+                                    data=audio_bytes,
+                                    file_name=filename,
+                                    mime="audio/mpeg",
+                                    key="mp3_download"
+                                )
+
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        st.error(f"Download failed: {str(e)}")
+                        if "ffmpeg" in error_msg or "ffprobe" in error_msg:
+                            st.error("FFmpeg not found! Download from https://www.gyan.dev/ffmpeg/builds/ and add 'bin' to PATH.")
+
+st.caption("Song Explainer AI + YouTube MP3 Downloader • Built with ❤️ using Streamlit, Groq & yt-dlp")
