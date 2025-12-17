@@ -185,19 +185,19 @@ else:
         st.header("Download Free & Legal Music")
         st.write("Discover independent music from **Jamendo** – all tracks are Creative Commons licensed and free to download!")
 
-        search_query = st.text_input("Search for music (e.g., rock, chill, instrumental, pop)", key="jamendo_search")
+        search_query = st.text_input("Search for music (e.g., groove rock, high energy, ambient, piano instrumental)", key="jamendo_search")
         if st.button("Search Music", key="jamendo_btn"):
             if search_query:
                 with st.spinner("Searching Jamendo for free tracks..."):
                     url = "https://api.jamendo.com/v3.0/tracks/"
                     params = {
-                    "client_id": st.secrets["JAMENDO_CLIENT_ID"],
-                    "format": "json",
-                    "limit": 15,
-                    "fuzzytags": search_query,  # Changed to fuzzytags
-                    "audioformat": "mp3",
-                    "include": "musicinfo+licenses"
-}
+                        "client_id": st.secrets["JAMENDO_CLIENT_ID"],
+                        "format": "json",
+                        "limit": 15,
+                        "fuzzytags": search_query.replace(" ", "+"),  # Better matching for genres
+                        "audioformat": "mp3",
+                        "include": "musicinfo+licenses"
+                    }
                     response = requests.get(url, params=params)
                     if response.status_code == 200:
                         data = response.json()
@@ -217,17 +217,16 @@ else:
                                     st.caption(f"Duration: {duration}s • [License]({license_url})")
                                 with col2:
                                     if audio_url:
-                                        # Download link with client_id
                                         full_url = audio_url + f"?client_id={st.secrets['JAMENDO_CLIENT_ID']}"
                                         dl_resp = requests.get(full_url)
                                         if dl_resp.status_code == 200:
                                             b64 = base64.b64encode(dl_resp.content).decode()
-                                            href = f'<a href="data:audio/mp3;base64,{b64}" download="{title} - {artist}.mp3"><button>⬇️ Download MP3</button></a>'
+                                            href = f'<a href="data:audio/mp3;base64,{b64}" download="{title} - {artist}.mp3"><button style="padding:10px; background:#1DB954; color:white; border:none; border-radius:5px; cursor:pointer;">⬇️ Download MP3</button></a>'
                                             st.markdown(href, unsafe_allow_html=True)
                         else:
-                            st.info("No tracks found. Try broader keywords like 'chill', 'rock', or 'instrumental'.")
+                            st.info("No tracks found. Try keywords like 'groove rock', 'high energy', 'ambient', or 'piano instrumental'.")
                     else:
-                        st.error("Jamendo API error. Check your client_id in Secrets.")
+                        st.error(f"Jamendo API error (status {response.status_code}). Check your client_id.")
             else:
                 st.warning("Enter a search term!")
 
