@@ -3,3 +3,4 @@ groq
 requests
 st-copy-to-clipboard
 pytube
+yt-dlp
